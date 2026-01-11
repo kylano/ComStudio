@@ -19,12 +19,15 @@
 class SerialSettingsWidget;
 class TerminalWidget;
 class PlotterWidget;
+class ParserConfigWidget;
 class ProtocolHandler;
 class DataBuffer;
+class LineParser;
 class QTabWidget;
 class QDockWidget;
 class QLabel;
 class QComboBox;
+struct ParserConfig;
 
 /**
  * @class MainWindow
@@ -109,6 +112,19 @@ private slots:
      * @brief Show about dialog
      */
     void showAbout();
+    
+    /**
+     * @brief Handle parser config applied
+     * @param config New parser configuration
+     */
+    void onParserConfigApplied(const ParserConfig &config);
+    
+    /**
+     * @brief Handle test parse request
+     * @param sampleLine Line to test
+     * @param config Configuration to use
+     */
+    void onTestParseRequested(const QString &sampleLine, const ParserConfig &config);
 
 private:
     /**
@@ -149,10 +165,12 @@ private:
     // UI Components
     QTabWidget *m_tabWidget = nullptr;
     QDockWidget *m_settingsDock = nullptr;
+    QDockWidget *m_parserDock = nullptr;
     
     SerialSettingsWidget *m_serialSettings = nullptr;
     TerminalWidget *m_terminal = nullptr;
     PlotterWidget *m_plotter = nullptr;
+    ParserConfigWidget *m_parserConfig = nullptr;
     
     // Status bar widgets
     QLabel *m_statusLabel = nullptr;
@@ -162,9 +180,11 @@ private:
     // Backend components
     std::unique_ptr<ProtocolHandler> m_protocolHandler;
     std::unique_ptr<DataBuffer> m_dataBuffer;
+    LineParser *m_lineParser = nullptr;  // Owned by protocol handler
     
     // State
     quint64 m_packetCount = 0;
+    QString m_lastRawLine;  // Last received line for test parse
 };
 
 #endif // MAINWINDOW_H

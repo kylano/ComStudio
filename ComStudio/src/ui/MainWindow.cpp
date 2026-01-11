@@ -7,9 +7,11 @@
 #include "ui/SerialSettingsWidget.h"
 #include "ui/TerminalWidget.h"
 #include "ui/PlotterWidget.h"
+#include "ui/ParserConfigWidget.h"
 #include "core/SerialManager.h"
 #include "core/ProtocolHandler.h"
 #include "core/LineParser.h"
+#include "core/ParserConfig.h"
 #include "models/DataBuffer.h"
 
 #include <QTabWidget>
@@ -65,13 +67,27 @@ void MainWindow::setupUi()
     
     // Serial settings dock
     m_settingsDock = new QDockWidget(tr("Serial Port"), this);
-    m_settingsDock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
+    m_settingsDock->setFeatures(QDockWidget::DockWidgetClosable |
+                                QDockWidget::DockWidgetMovable |
+                                QDockWidget::DockWidgetFloatable);
     m_settingsDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     
     m_serialSettings = new SerialSettingsWidget();
     m_settingsDock->setWidget(m_serialSettings);
     
     addDockWidget(Qt::LeftDockWidgetArea, m_settingsDock);
+    
+    // Parser config dock
+    m_parserDock = new QDockWidget(tr("Parser Config"), this);
+    m_parserDock->setFeatures(QDockWidget::DockWidgetClosable |
+                              QDockWidget::DockWidgetMovable |
+                              QDockWidget::DockWidgetFloatable);
+    m_parserDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    
+    m_parserConfig = new ParserConfigWidget();
+    m_parserDock->setWidget(m_parserConfig);
+    
+    addDockWidget(Qt::RightDockWidgetArea, m_parserDock);
 }
 
 void MainWindow::setupMenus()
@@ -94,6 +110,10 @@ void MainWindow::setupMenus()
     QAction *settingsAction = m_settingsDock->toggleViewAction();
     settingsAction->setText(tr("Serial Settings Panel"));
     viewMenu->addAction(settingsAction);
+    
+    QAction *parserAction = m_parserDock->toggleViewAction();
+    parserAction->setText(tr("Parser Config Panel"));
+    viewMenu->addAction(parserAction);
     
     viewMenu->addSeparator();
     
@@ -142,7 +162,13 @@ void MainWindow::initProtocolHandler()
 {
     // Register default line parser protocol
     auto lineParser = std::make_shared<LineParser>();
+    m_lineParser = lineParser.get();  // Keep raw pointer for config updates
     m_protocolHandler->registerProtocol("line", lineParser);
+    
+    // Initialize parser config widget with current config
+    if (m_parserConfig && m_lineParser) {
+        m_parserConfig->setConfig(m_lineParser->config());
+    }
     
     // Populate protocol combo
     m_protocolCombo->clear();
@@ -181,6 +207,12 @@ void MainWindow::connectSignals()
     // Data buffer to UI connections
     connect(m_dataBuffer.get(), &DataBuffer::dataUpdated,
             m_plotter, &PlotterWidget::addData);
+    
+    // Parser config connections
+    connect(m_parserConfig, &ParserConfigWidget::configApplied,
+            this, &MainWindow::onParserConfigApplied);
+    connect(m_parserConfig, &ParserConfigWidget::testParseRequested,
+            this, &MainWindow::onTestParseRequested);
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -225,6 +257,18 @@ void MainWindow::onRawBytesReceived(const QByteArray &data)
     
     // Also send raw data to terminal in raw mode
     m_terminal->appendRawData(data);
+    
+    // Store last complete line for test parse
+    // Look for line ending in the data
+    QString dataStr = QString::fromUtf8(data);
+    if (dataStr.contains('\n')) {
+        // Get the last complete line
+        QStringList lines = dataStr.split('\n', Qt::SkipEmptyParts);
+        if (!lines.isEmpty()) {
+            m_lastRawLine = lines.last().trimmed();
+            m_parserConfig->setSampleLine(m_lastRawLine);
+        }
+    }
 }
 
 void MainWindow::onDataParsed(const GenericDataPacket &packet)
@@ -278,4 +322,18 @@ void MainWindow::loadSettings()
     QSettings settings("ComStudio", "ComStudio");
     restoreGeometry(settings.value("geometry").toByteArray());
     restoreState(settings.value("windowState").toByteArray());
+}
+
+void MainWindow::onParserConfigApplied(const ParserConfig &config)
+{
+    if (m_lineParser) {
+        m_lineParser->setConfig(config);
+        statusBar()->showMessage(tr("Parser configuration applied"), 3000);
+    }
+}
+
+void MainWindow::onTestParseRequested(const QString &sampleLine, const ParserConfig &config)
+{
+    ParseResult result = LineParser::testParse(sampleLine, config);
+    m_parserConfig->showTestResult(result);
 }

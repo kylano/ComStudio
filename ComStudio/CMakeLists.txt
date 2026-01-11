@@ -46,6 +46,7 @@ set(UI_SOURCES
     src/ui/SerialSettingsWidget.cpp
     src/ui/TerminalWidget.cpp
     src/ui/PlotterWidget.cpp
+    src/ui/ParserConfigWidget.cpp
 )
 
 set(UI_HEADERS
@@ -53,6 +54,7 @@ set(UI_HEADERS
     include/ui/SerialSettingsWidget.h
     include/ui/TerminalWidget.h
     include/ui/PlotterWidget.h
+    include/ui/ParserConfigWidget.h
 )
 
 set(UI_FORMS

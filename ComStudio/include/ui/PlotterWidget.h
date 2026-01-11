@@ -13,16 +13,22 @@
 #include <QVector>
 #include <QTimer>
 #include <QMap>
+#include <QSet>
 
 #include "core/GenericDataPacket.h"
+
+class ChannelPlotWindow;
 
 // Forward declarations
 class QCustomPlot;
 class QCPGraph;
+class QCPLegend;
+class QCPAbstractLegendItem;
 class QSpinBox;
 class QCheckBox;
 class QPushButton;
 class QComboBox;
+class QLabel;
 
 /**
  * @class PlotterWidget
@@ -119,6 +125,25 @@ private slots:
      * @param checked Auto-scale state
      */
     void onAutoScaleToggled(bool checked);
+    
+    /**
+     * @brief Handle buffer limit change
+     * @param value New buffer limit
+     */
+    void onBufferLimitChanged(int value);
+    
+    /**
+     * @brief Handle legend item click for pop-out
+     * @param legend Legend clicked
+     * @param item Item clicked
+     */
+    void onLegendClick(QCPLegend *legend, QCPAbstractLegendItem *item, QMouseEvent *event);
+    
+    /**
+     * @brief Handle channel reattach request
+     * @param channelIndex Channel to reattach
+     */
+    void onChannelReattach(int channelIndex);
 
 private:
     /**
@@ -152,9 +177,11 @@ private:
 
     QCustomPlot *m_plot = nullptr;
     QSpinBox *m_timeWindowSpin = nullptr;
+    QSpinBox *m_bufferLimitSpin = nullptr;
     QCheckBox *m_autoScaleCheck = nullptr;
     QPushButton *m_pauseButton = nullptr;
     QPushButton *m_clearButton = nullptr;
+    QLabel *m_bufferStatusLabel = nullptr;
     
     QTimer *m_updateTimer = nullptr;
     
@@ -176,6 +203,12 @@ private:
     
     // Channel colors (Catppuccin Mocha palette)
     static const QVector<QColor> s_channelColors;
+    
+    // Detached channel windows
+    QMap<int, ChannelPlotWindow*> m_detachedWindows;
+    QSet<int> m_detachedChannels;  // Channels that are popped out
+    
+    void popOutChannel(int channelIndex);
 };
 
 #endif // PLOTTERWIDGET_H

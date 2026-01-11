@@ -60,7 +60,7 @@ void TerminalWidget::setupUi()
     m_terminal->setMaximumBlockCount(m_maxLines);
     mainLayout->addWidget(m_terminal, 1);
     
-    // Send input
+    // Send input row
     auto *sendLayout = new QHBoxLayout();
     sendLayout->setSpacing(4);
     
@@ -68,6 +68,24 @@ void TerminalWidget::setupUi()
     m_sendInput->setPlaceholderText(tr("Enter data to send..."));
     connect(m_sendInput, &QLineEdit::returnPressed, this, &TerminalWidget::onSendClicked);
     sendLayout->addWidget(m_sendInput, 1);
+    
+    // Send mode selector (ASCII/Hex)
+    m_sendModeCombo = new QComboBox();
+    m_sendModeCombo->setToolTip(tr("Send mode"));
+    m_sendModeCombo->addItem(tr("ASCII"), static_cast<int>(SendMode::ASCII));
+    m_sendModeCombo->addItem(tr("Hex"), static_cast<int>(SendMode::Hex));
+    m_sendModeCombo->setFixedWidth(70);
+    sendLayout->addWidget(m_sendModeCombo);
+    
+    // Line ending selector
+    m_lineEndingCombo = new QComboBox();
+    m_lineEndingCombo->setToolTip(tr("Line ending"));
+    m_lineEndingCombo->addItem(tr("None"), static_cast<int>(LineEnding::None));
+    m_lineEndingCombo->addItem(tr("LF"), static_cast<int>(LineEnding::LF));
+    m_lineEndingCombo->addItem(tr("CRLF"), static_cast<int>(LineEnding::CRLF));
+    m_lineEndingCombo->setCurrentIndex(1);  // Default to LF
+    m_lineEndingCombo->setFixedWidth(60);
+    sendLayout->addWidget(m_lineEndingCombo);
     
     m_sendButton = new QPushButton(tr("Send"));
     connect(m_sendButton, &QPushButton::clicked, this, &TerminalWidget::onSendClicked);
@@ -157,15 +175,32 @@ void TerminalWidget::onSendClicked()
     
     QByteArray data;
     
-    // Check if input is hex format (starts with 0x or contains spaces between hex bytes)
-    if (text.startsWith("0x", Qt::CaseInsensitive) || 
-        text.contains(QRegularExpression("^[0-9A-Fa-f]{2}(\\s+[0-9A-Fa-f]{2})+$"))) {
-        // Parse as hex
-        QString cleanHex = text.remove("0x", Qt::CaseInsensitive).remove(' ');
+    // Get current send mode
+    SendMode mode = static_cast<SendMode>(m_sendModeCombo->currentData().toInt());
+    LineEnding ending = static_cast<LineEnding>(m_lineEndingCombo->currentData().toInt());
+    
+    if (mode == SendMode::Hex) {
+        // Parse as hex (strip 0x prefixes and spaces)
+        QString cleanHex = text;
+        cleanHex.remove("0x", Qt::CaseInsensitive);
+        cleanHex.remove(' ');
         data = QByteArray::fromHex(cleanHex.toLatin1());
     } else {
-        // Send as ASCII with newline
-        data = (text + "\n").toUtf8();
+        // Send as ASCII
+        data = text.toUtf8();
+    }
+    
+    // Append line ending (for both modes, user may want \n after hex)
+    switch (ending) {
+        case LineEnding::LF:
+            data.append('\n');
+            break;
+        case LineEnding::CRLF:
+            data.append("\r\n");
+            break;
+        case LineEnding::None:
+        default:
+            break;
     }
     
     emit sendData(data);

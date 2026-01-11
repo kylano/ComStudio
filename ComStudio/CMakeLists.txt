@@ -47,6 +47,9 @@ set(UI_SOURCES
     src/ui/TerminalWidget.cpp
     src/ui/PlotterWidget.cpp
     src/ui/ParserConfigWidget.cpp
+    src/ui/AutoSendDialog.cpp
+    src/ui/RecordingWidget.cpp
+    src/ui/ChannelPlotWindow.cpp
 )
 
 set(UI_HEADERS
@@ -55,6 +58,9 @@ set(UI_HEADERS
     include/ui/TerminalWidget.h
     include/ui/PlotterWidget.h
     include/ui/ParserConfigWidget.h
+    include/ui/AutoSendDialog.h
+    include/ui/RecordingWidget.h
+    include/ui/ChannelPlotWindow.h
 )
 
 set(UI_FORMS

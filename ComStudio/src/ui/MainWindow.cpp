@@ -8,6 +8,8 @@
 #include "ui/TerminalWidget.h"
 #include "ui/PlotterWidget.h"
 #include "ui/ParserConfigWidget.h"
+#include "ui/AutoSendDialog.h"
+#include "ui/RecordingWidget.h"
 #include "core/SerialManager.h"
 #include "core/ProtocolHandler.h"
 #include "core/LineParser.h"
@@ -26,6 +28,8 @@
 #include <QCloseEvent>
 #include <QHBoxLayout>
 #include <QApplication>
+#include <QSplitter>
+#include <QStackedWidget>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -52,18 +56,27 @@ MainWindow::~MainWindow()
 
 void MainWindow::setupUi()
 {
-    // Central widget with tabs
-    m_tabWidget = new QTabWidget(this);
-    m_tabWidget->setDocumentMode(true);
-    setCentralWidget(m_tabWidget);
-    
-    // Terminal tab
+    // Create terminal and plotter widgets
     m_terminal = new TerminalWidget();
-    m_tabWidget->addTab(m_terminal, tr("Terminal"));
-    
-    // Plotter tab
     m_plotter = new PlotterWidget();
+    
+    // Create stacked widget to switch between layouts
+    m_centralStack = new QStackedWidget(this);
+    setCentralWidget(m_centralStack);
+    
+    // Tab widget layout (default)
+    m_tabWidget = new QTabWidget();
+    m_tabWidget->setDocumentMode(true);
+    m_tabWidget->addTab(m_terminal, tr("Terminal"));
     m_tabWidget->addTab(m_plotter, tr("Plotter"));
+    m_centralStack->addWidget(m_tabWidget);
+    
+    // Splitter layout (side-by-side)
+    m_splitter = new QSplitter(Qt::Horizontal);
+    m_centralStack->addWidget(m_splitter);
+    
+    // Default to tabbed view
+    m_centralStack->setCurrentWidget(m_tabWidget);
     
     // Serial settings dock
     m_settingsDock = new QDockWidget(tr("Serial Port"), this);
@@ -88,6 +101,19 @@ void MainWindow::setupUi()
     m_parserDock->setWidget(m_parserConfig);
     
     addDockWidget(Qt::RightDockWidgetArea, m_parserDock);
+    
+    // Recording dock (hidden by default)
+    m_recordingDock = new QDockWidget(tr("Recording"), this);
+    m_recordingDock->setFeatures(QDockWidget::DockWidgetClosable |
+                                 QDockWidget::DockWidgetMovable |
+                                 QDockWidget::DockWidgetFloatable);
+    m_recordingDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea | Qt::BottomDockWidgetArea);
+    
+    m_recordingWidget = new RecordingWidget();
+    m_recordingDock->setWidget(m_recordingWidget);
+    
+    addDockWidget(Qt::BottomDockWidgetArea, m_recordingDock);
+    m_recordingDock->hide();  // Hidden by default for clean UI
 }
 
 void MainWindow::setupMenus()
@@ -115,6 +141,17 @@ void MainWindow::setupMenus()
     parserAction->setText(tr("Parser Config Panel"));
     viewMenu->addAction(parserAction);
     
+    QAction *recordingAction = m_recordingDock->toggleViewAction();
+    recordingAction->setText(tr("Recording Panel"));
+    viewMenu->addAction(recordingAction);
+    
+    viewMenu->addSeparator();
+    
+    m_splitViewAction = viewMenu->addAction(tr("Split View (Terminal + Plotter)"));
+    m_splitViewAction->setCheckable(true);
+    m_splitViewAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_T));
+    connect(m_splitViewAction, &QAction::toggled, this, &MainWindow::onLayoutToggled);
+    
     viewMenu->addSeparator();
     
     QAction *clearTerminalAction = viewMenu->addAction(tr("Clear Terminal"));
@@ -123,6 +160,13 @@ void MainWindow::setupMenus()
     
     QAction *clearPlotAction = viewMenu->addAction(tr("Clear Plot"));
     connect(clearPlotAction, &QAction::triggered, m_plotter, &PlotterWidget::clear);
+    
+    // Tools menu
+    QMenu *toolsMenu = menuBar()->addMenu(tr("&Tools"));
+    
+    QAction *autoSendAction = toolsMenu->addAction(tr("Auto-Send Presets..."));
+    autoSendAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_P));
+    connect(autoSendAction, &QAction::triggered, this, &MainWindow::showAutoSendDialog);
     
     // Help menu
     QMenu *helpMenu = menuBar()->addMenu(tr("&Help"));
@@ -207,6 +251,8 @@ void MainWindow::connectSignals()
     // Data buffer to UI connections
     connect(m_dataBuffer.get(), &DataBuffer::dataUpdated,
             m_plotter, &PlotterWidget::addData);
+    connect(m_dataBuffer.get(), &DataBuffer::dataUpdated,
+            m_recordingWidget, &RecordingWidget::recordPacket);
     
     // Parser config connections
     connect(m_parserConfig, &ParserConfigWidget::configApplied,
@@ -315,6 +361,10 @@ void MainWindow::saveSettings()
     QSettings settings("ComStudio", "ComStudio");
     settings.setValue("geometry", saveGeometry());
     settings.setValue("windowState", saveState());
+    settings.setValue("splitView", m_isSplitView);
+    if (m_isSplitView) {
+        settings.setValue("splitterState", m_splitter->saveState());
+    }
 }
 
 void MainWindow::loadSettings()
@@ -322,6 +372,14 @@ void MainWindow::loadSettings()
     QSettings settings("ComStudio", "ComStudio");
     restoreGeometry(settings.value("geometry").toByteArray());
     restoreState(settings.value("windowState").toByteArray());
+    
+    bool splitView = settings.value("splitView", false).toBool();
+    if (splitView) {
+        m_splitViewAction->setChecked(true);  // This triggers onLayoutToggled
+        if (settings.contains("splitterState")) {
+            m_splitter->restoreState(settings.value("splitterState").toByteArray());
+        }
+    }
 }
 
 void MainWindow::onParserConfigApplied(const ParserConfig &config)
@@ -336,4 +394,58 @@ void MainWindow::onTestParseRequested(const QString &sampleLine, const ParserCon
 {
     ParseResult result = LineParser::testParse(sampleLine, config);
     m_parserConfig->showTestResult(result);
+}
+
+void MainWindow::showAutoSendDialog()
+{
+    if (!m_autoSendDialog) {
+        m_autoSendDialog = new AutoSendDialog(this);
+        connect(m_autoSendDialog, &AutoSendDialog::sendRequested,
+                this, &MainWindow::onAutoSendRequested);
+    }
+    m_autoSendDialog->show();
+    m_autoSendDialog->raise();
+    m_autoSendDialog->activateWindow();
+}
+
+void MainWindow::onAutoSendRequested(const QString &payload)
+{
+    // Use terminal's current send settings for encoding
+    QByteArray data = payload.toUtf8();
+    // Add default line ending (LF) for auto-send
+    data.append('\n');
+    SerialManager::instance().sendData(data);
+}
+
+void MainWindow::onLayoutToggled(bool splitView)
+{
+    m_isSplitView = splitView;
+    
+    if (splitView) {
+        // Remove widgets from tabs (this hides them)
+        int termIdx = m_tabWidget->indexOf(m_terminal);
+        int plotIdx = m_tabWidget->indexOf(m_plotter);
+        if (termIdx >= 0) m_tabWidget->removeTab(termIdx);
+        if (plotIdx >= 0) m_tabWidget->removeTab(m_tabWidget->indexOf(m_plotter));
+        
+        // Add to splitter and ensure visible
+        m_splitter->addWidget(m_terminal);
+        m_splitter->addWidget(m_plotter);
+        m_terminal->show();
+        m_plotter->show();
+        
+        m_centralStack->setCurrentWidget(m_splitter);
+        m_splitter->setSizes({width() / 2, width() / 2});
+    } else {
+        // Move widgets from splitter back to tabs
+        m_terminal->setParent(nullptr);
+        m_plotter->setParent(nullptr);
+        
+        m_tabWidget->addTab(m_terminal, tr("Terminal"));
+        m_tabWidget->addTab(m_plotter, tr("Plotter"));
+        m_terminal->show();
+        m_plotter->show();
+        
+        m_centralStack->setCurrentWidget(m_tabWidget);
+    }
 }

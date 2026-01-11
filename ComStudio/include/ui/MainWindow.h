@@ -20,6 +20,8 @@ class SerialSettingsWidget;
 class TerminalWidget;
 class PlotterWidget;
 class ParserConfigWidget;
+class AutoSendDialog;
+class RecordingWidget;
 class ProtocolHandler;
 class DataBuffer;
 class LineParser;
@@ -27,7 +29,10 @@ class QTabWidget;
 class QDockWidget;
 class QLabel;
 class QComboBox;
+class QSplitter;
+class QStackedWidget;
 struct ParserConfig;
+struct SendPreset;
 
 /**
  * @class MainWindow
@@ -114,6 +119,23 @@ private slots:
     void showAbout();
     
     /**
+     * @brief Show auto-send presets dialog
+     */
+    void showAutoSendDialog();
+    
+    /**
+     * @brief Handle auto-send request from dialog
+     * @param payload Data payload to send
+     */
+    void onAutoSendRequested(const QString &payload);
+    
+    /**
+     * @brief Toggle between tabbed and split layout
+     * @param splitView True for split view, false for tabbed
+     */
+    void onLayoutToggled(bool splitView);
+    
+    /**
      * @brief Handle parser config applied
      * @param config New parser configuration
      */
@@ -164,13 +186,20 @@ private:
 
     // UI Components
     QTabWidget *m_tabWidget = nullptr;
+    QSplitter *m_splitter = nullptr;
+    QStackedWidget *m_centralStack = nullptr;
+    QAction *m_splitViewAction = nullptr;
     QDockWidget *m_settingsDock = nullptr;
     QDockWidget *m_parserDock = nullptr;
+    QDockWidget *m_recordingDock = nullptr;
+    bool m_isSplitView = false;
     
     SerialSettingsWidget *m_serialSettings = nullptr;
     TerminalWidget *m_terminal = nullptr;
     PlotterWidget *m_plotter = nullptr;
     ParserConfigWidget *m_parserConfig = nullptr;
+    AutoSendDialog *m_autoSendDialog = nullptr;
+    RecordingWidget *m_recordingWidget = nullptr;
     
     // Status bar widgets
     QLabel *m_statusLabel = nullptr;

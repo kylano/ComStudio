@@ -4,6 +4,7 @@
  */
 
 #include "ui/PlotterWidget.h"
+#include "ui/ChannelPlotWindow.h"
 #include "qcustomplot.h"
 
 #include <QVBoxLayout>
@@ -70,6 +71,20 @@ void PlotterWidget::setupUi()
     connect(m_autoScaleCheck, &QCheckBox::toggled, this, &PlotterWidget::onAutoScaleToggled);
     toolbarLayout->addWidget(m_autoScaleCheck);
     
+    toolbarLayout->addWidget(new QLabel(tr("Buffer:")));
+    m_bufferLimitSpin = new QSpinBox();
+    m_bufferLimitSpin->setRange(100, 100000);
+    m_bufferLimitSpin->setValue(m_maxDataPoints);
+    m_bufferLimitSpin->setSingleStep(1000);
+    m_bufferLimitSpin->setToolTip(tr("Max points per channel (prevents memory overflow)"));
+    connect(m_bufferLimitSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            this, &PlotterWidget::onBufferLimitChanged);
+    toolbarLayout->addWidget(m_bufferLimitSpin);
+    
+    m_bufferStatusLabel = new QLabel();
+    m_bufferStatusLabel->setToolTip(tr("Current buffer usage"));
+    toolbarLayout->addWidget(m_bufferStatusLabel);
+    
     toolbarLayout->addStretch();
     
     m_pauseButton = new QPushButton(tr("Pause"));
@@ -123,6 +138,10 @@ void PlotterWidget::setupPlot()
     m_plot->legend->setTextColor(QColor(0xcd, 0xd6, 0xf4));
     m_plot->legend->setBorderPen(QPen(QColor(0x31, 0x32, 0x44)));
     m_plot->axisRect()->insetLayout()->setInsetAlignment(0, Qt::AlignTop | Qt::AlignRight);
+    
+    // Enable legend item selection for pop-out
+    m_plot->legend->setSelectableParts(QCPLegend::spItems);
+    connect(m_plot, &QCustomPlot::legendDoubleClick, this, &PlotterWidget::onLegendClick);
 }
 
 void PlotterWidget::setTimeWindow(double seconds)
@@ -197,6 +216,28 @@ void PlotterWidget::setPaused(bool paused)
 
 void PlotterWidget::onUpdateTimer()
 {
+    // Update buffer status indicator
+    int maxPoints = 0;
+    for (const auto &data : m_channelData) {
+        maxPoints = qMax(maxPoints, data.timestamps.size());
+    }
+    
+    if (maxPoints > 0) {
+        int percent = (maxPoints * 100) / m_maxDataPoints;
+        QString status = QString("%1/%2").arg(maxPoints).arg(m_maxDataPoints);
+        if (percent >= 90) {
+            m_bufferStatusLabel->setStyleSheet("color: #f38ba8;");  // Red when near limit
+        } else if (percent >= 70) {
+            m_bufferStatusLabel->setStyleSheet("color: #fab387;");  // Orange warning
+        } else {
+            m_bufferStatusLabel->setStyleSheet("");
+        }
+        m_bufferStatusLabel->setText(status);
+    } else {
+        m_bufferStatusLabel->setText("");
+        m_bufferStatusLabel->setStyleSheet("");
+    }
+    
     if (!m_needsReplot || m_paused) {
         return;
     }
@@ -213,6 +254,16 @@ void PlotterWidget::onUpdateTimer()
     
     updateAxisRanges();
     m_plot->replot(QCustomPlot::rpQueuedReplot);
+    
+    // Update detached windows
+    for (auto it = m_detachedWindows.begin(); it != m_detachedWindows.end(); ++it) {
+        int channelIndex = it.key();
+        if (m_channelData.contains(channelIndex)) {
+            const auto &data = m_channelData[channelIndex];
+            it.value()->updateData(data.timestamps, data.values);
+        }
+    }
+    
     m_needsReplot = false;
 }
 
@@ -234,6 +285,93 @@ void PlotterWidget::onTimeWindowChanged(int value)
 void PlotterWidget::onAutoScaleToggled(bool checked)
 {
     m_autoScale = checked;
+}
+
+void PlotterWidget::onBufferLimitChanged(int value)
+{
+    m_maxDataPoints = value;
+    
+    // Trim existing data if over new limit
+    for (auto it = m_channelData.begin(); it != m_channelData.end(); ++it) {
+        auto &data = it.value();
+        while (data.timestamps.size() > m_maxDataPoints) {
+            data.timestamps.removeFirst();
+            data.values.removeFirst();
+        }
+    }
+    
+    m_needsReplot = true;
+}
+
+void PlotterWidget::onLegendClick(QCPLegend *legend, QCPAbstractLegendItem *item, QMouseEvent *event)
+{
+    Q_UNUSED(legend);
+    Q_UNUSED(event);
+    
+    // Find which graph was clicked
+    if (auto *plItem = qobject_cast<QCPPlottableLegendItem*>(item)) {
+        for (int i = 0; i < m_graphs.size(); ++i) {
+            if (m_graphs[i] == plItem->plottable()) {
+                popOutChannel(i);
+                break;
+            }
+        }
+    }
+}
+
+void PlotterWidget::popOutChannel(int channelIndex)
+{
+    if (m_detachedChannels.contains(channelIndex)) {
+        // Already detached, bring to front
+        if (m_detachedWindows.contains(channelIndex)) {
+            m_detachedWindows[channelIndex]->raise();
+            m_detachedWindows[channelIndex]->activateWindow();
+        }
+        return;
+    }
+    
+    if (channelIndex >= m_graphs.size()) {
+        return;
+    }
+    
+    QString name = m_graphs[channelIndex]->name();
+    QColor color = channelColor(channelIndex);
+    
+    auto *window = new ChannelPlotWindow(channelIndex, name, color, nullptr);
+    connect(window, &ChannelPlotWindow::reattachRequested,
+            this, &PlotterWidget::onChannelReattach);
+    
+    m_detachedWindows[channelIndex] = window;
+    m_detachedChannels.insert(channelIndex);
+    
+    // Hide from main plot
+    m_graphs[channelIndex]->setVisible(false);
+    
+    // Send current data
+    if (m_channelData.contains(channelIndex)) {
+        const auto &data = m_channelData[channelIndex];
+        window->updateData(data.timestamps, data.values);
+    }
+    
+    window->show();
+    m_needsReplot = true;
+}
+
+void PlotterWidget::onChannelReattach(int channelIndex)
+{
+    m_detachedChannels.remove(channelIndex);
+    
+    if (m_detachedWindows.contains(channelIndex)) {
+        m_detachedWindows[channelIndex]->deleteLater();
+        m_detachedWindows.remove(channelIndex);
+    }
+    
+    // Show in main plot again
+    if (channelIndex < m_graphs.size()) {
+        m_graphs[channelIndex]->setVisible(true);
+    }
+    
+    m_needsReplot = true;
 }
 
 QCPGraph* PlotterWidget::ensureGraph(int channelIndex)

@@ -29,6 +29,25 @@ enum class DisplayMode {
 };
 
 /**
+ * @enum LineEnding
+ * @brief Line ending options for sending data
+ */
+enum class LineEnding {
+    None,       ///< No line ending
+    LF,         ///< \n (Unix)
+    CRLF        ///< \r\n (Windows)
+};
+
+/**
+ * @enum SendMode
+ * @brief Send mode options
+ */
+enum class SendMode {
+    ASCII,      ///< Send as ASCII text
+    Hex         ///< Send as hex bytes
+};
+
+/**
  * @class TerminalWidget
  * @brief Widget for terminal-style data display
  *
@@ -145,7 +164,13 @@ private:
     QCheckBox *m_autoScrollCheck = nullptr;
     QCheckBox *m_timestampCheck = nullptr;
     
+    // Send controls
+    QComboBox *m_lineEndingCombo = nullptr;
+    QComboBox *m_sendModeCombo = nullptr;
+    
     DisplayMode m_displayMode = DisplayMode::Raw;
+    LineEnding m_lineEnding = LineEnding::LF;
+    SendMode m_sendMode = SendMode::ASCII;
     int m_maxLines = 10000;
     bool m_autoScroll = true;
 };

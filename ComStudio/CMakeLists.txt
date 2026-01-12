@@ -116,6 +116,14 @@ set_target_properties(ComStudio PROPERTIES
     WIN32_EXECUTABLE TRUE
 )
 
+# Windows icon
+if (WIN32)
+    set(APP_ICON "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/serial_terminal.ico")
+    if (EXISTS ${APP_ICON})
+        target_sources(ComStudio PRIVATE app.rc)
+    endif()
+endif()
+
 # Install rules
 include(GNUInstallDirs)
 install(TARGETS ComStudio

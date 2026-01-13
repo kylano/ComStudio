@@ -12,12 +12,16 @@ LineParser::LineParser(QObject *parent)
     : BaseProtocol(parent)
     , m_config(ParserConfig::csvDefault())
 {
+    m_elapsedTimer.start();
+    m_timerStarted = true;
 }
 
 LineParser::LineParser(const ParserConfig &config, QObject *parent)
     : BaseProtocol(parent)
     , m_config(config)
 {
+    m_elapsedTimer.start();
+    m_timerStarted = true;
 }
 
 void LineParser::setConfig(const ParserConfig &config)
@@ -26,10 +30,25 @@ void LineParser::setConfig(const ParserConfig &config)
     reset();
 }
 
+void LineParser::setTargetDisplayRate(int hz)
+{
+    m_targetDisplayRate = hz;
+    if (hz > 0) {
+        m_targetIntervalMs = 1000.0 / hz;
+    } else {
+        m_targetIntervalMs = 0;  // No rate limiting
+    }
+}
+
 void LineParser::reset()
 {
     m_buffer.clear();
     m_packetCounter = 0;
+    m_lastEmitTimestamp = 0;
+    if (!m_timerStarted) {
+        m_elapsedTimer.start();
+        m_timerStarted = true;
+    }
 }
 
 void LineParser::parse(const QByteArray &data)
@@ -83,6 +102,9 @@ void LineParser::parse(const QByteArray &data)
 
 void LineParser::processLine(QStringView line)
 {
+    // Always emit raw line for terminal display (no rate limit)
+    emit rawLineReady(line.toString());
+    
     // Create packet
     GenericDataPacket packet;
     packet.rawData = line.toUtf8();
@@ -103,13 +125,44 @@ void LineParser::processLine(QStringView line)
     // Check sensor ID if configured
     if (m_config.idFieldIndex >= 0) {
         if (m_config.idFieldIndex < tokens.size()) {
-            bool ok = false;
-            int id = tokens[m_config.idFieldIndex].toInt(&ok);
-            if (ok) {
-                packet.sensorId = id;
+            QStringView idToken = tokens[m_config.idFieldIndex];
+            if (m_config.trimWhitespace) {
+                idToken = idToken.trimmed();
+            }
+            
+            // Store the full ID string (supports alphanumeric like "d1", "#5", etc.)
+            QString idStr = idToken.toString();
+            packet.sensorId = idStr;
+            
+            // Filter by sensor ID if configured (case-insensitive comparison)
+            if (!m_config.acceptSensorId.isEmpty()) {
+                // Compare the ID - support both exact match and numeric extraction
+                bool matches = false;
                 
-                // Filter by sensor ID if configured
-                if (m_config.acceptSensorId >= 0 && id != m_config.acceptSensorId) {
+                // Try exact match first (case-insensitive)
+                if (idStr.compare(m_config.acceptSensorId, Qt::CaseInsensitive) == 0) {
+                    matches = true;
+                } else {
+                    // Try to extract numeric part and compare
+                    // This handles cases like "#12820" matching "12820" or "d1" matching "1"
+                    QString idNumeric, filterNumeric;
+                    
+                    // Extract numeric part from ID
+                    for (const QChar &c : idStr) {
+                        if (c.isDigit() || c == '-') idNumeric += c;
+                    }
+                    // Extract numeric part from filter
+                    for (const QChar &c : m_config.acceptSensorId) {
+                        if (c.isDigit() || c == '-') filterNumeric += c;
+                    }
+                    
+                    if (!idNumeric.isEmpty() && !filterNumeric.isEmpty() && 
+                        idNumeric == filterNumeric) {
+                        matches = true;
+                    }
+                }
+                
+                if (!matches) {
                     return; // Discard packet silently
                 }
             }
@@ -167,7 +220,20 @@ void LineParser::processLine(QStringView line)
     packet.isValid = packet.hasData() && !hasError;
     
     if (packet.hasData()) {
-        emit dataParsed(packet);
+        // Always emit for logging (no rate limit) - use for recording
+        emit dataForLogging(packet);
+        
+        // Rate-limited emission for display (plotting/terminal parsed mode)
+        if (!m_rateLimitEnabled || m_targetIntervalMs <= 0) {
+            // No rate limiting - emit every packet
+            emit dataParsed(packet);
+        } else {
+            qint64 now = m_elapsedTimer.elapsed();
+            if (m_lastEmitTimestamp == 0 || (now - m_lastEmitTimestamp) >= m_targetIntervalMs) {
+                m_lastEmitTimestamp = now;
+                emit dataParsed(packet);
+            }
+        }
     } else if (hasError) {
         emit parseError(packet.errorMessage, packet.rawData);
     }

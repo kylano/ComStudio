@@ -4,7 +4,7 @@
  *
  * Zero-allocation parser using QStringView for maximum performance
  * at high baud rates. Supports configurable delimiters, field mapping,
- * and label stripping.
+ * label stripping, and rate-limited output for UI performance.
  */
 
 #ifndef LINEPARSER_H
@@ -15,6 +15,7 @@
 #include <QString>
 #include <QStringView>
 #include <QVector>
+#include <QElapsedTimer>
 #include <optional>
 
 #include "BaseProtocol.h"
@@ -86,6 +87,30 @@ public:
     void setConfig(const ParserConfig &config);
     
     /**
+     * @brief Set target display rate for rate-limited output
+     * @param hz Target rate in Hz (0 = no limit, emit all packets)
+     */
+    void setTargetDisplayRate(int hz);
+    
+    /**
+     * @brief Get current target display rate
+     * @return Current rate in Hz
+     */
+    int targetDisplayRate() const { return m_targetDisplayRate; }
+    
+    /**
+     * @brief Enable/disable rate limiting
+     * @param enabled True to enable rate limiting
+     */
+    void setRateLimitEnabled(bool enabled) { m_rateLimitEnabled = enabled; }
+    
+    /**
+     * @brief Check if rate limiting is enabled
+     * @return True if rate limiting is active
+     */
+    bool isRateLimitEnabled() const { return m_rateLimitEnabled; }
+    
+    /**
      * @brief Test parse a sample line
      *
      * Static method for testing configuration against sample data
@@ -103,6 +128,27 @@ public:
      * @return Detailed parse result
      */
     ParseResult testParse(const QString &sampleLine) const;
+
+signals:
+    /**
+     * @brief Emitted for every raw line received (no rate limiting)
+     * 
+     * Use this for terminal raw mode display. Always emitted regardless
+     * of rate limiting settings.
+     * 
+     * @param line The raw line as received
+     */
+    void rawLineReady(const QString &line);
+    
+    /**
+     * @brief Emitted for every valid packet (no rate limiting)
+     * 
+     * Use this for data logging where all samples must be recorded.
+     * Bypasses display rate limiting.
+     * 
+     * @param packet The parsed packet
+     */
+    void dataForLogging(const GenericDataPacket &packet);
 
 private:
     /**
@@ -133,6 +179,14 @@ private:
     ParserConfig m_config;
     QByteArray m_buffer;           ///< Accumulation buffer for incomplete lines
     quint64 m_packetCounter = 0;   ///< Auto-incrementing packet counter
+    
+    // Rate limiting for display performance
+    QElapsedTimer m_elapsedTimer;  ///< High-resolution timer for rate limiting
+    qint64 m_lastEmitTimestamp = 0; ///< Last time dataParsed was emitted
+    double m_targetIntervalMs = 16.67; ///< Target interval between emissions (ms)
+    int m_targetDisplayRate = 60;  ///< Target display rate in Hz
+    bool m_rateLimitEnabled = true; ///< Whether rate limiting is active
+    bool m_timerStarted = false;   ///< Whether elapsed timer has been started
 };
 
 #endif // LINEPARSER_H

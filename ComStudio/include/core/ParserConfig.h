@@ -50,12 +50,13 @@ struct ParserConfig
     int idFieldIndex = -1;
     
     /**
-     * @brief Sensor ID to accept (-1 for all)
+     * @brief Sensor ID to accept (empty string for all)
      *
-     * If idFieldIndex is set and this is >= 0, only lines with
-     * matching sensor ID will be processed.
+     * If idFieldIndex is set and this is not empty, only lines with
+     * matching sensor ID will be processed. Supports alphanumeric IDs
+     * like "d1", "sensor2", "#5", etc.
      */
-    int acceptSensorId = -1;
+    QString acceptSensorId;
     
     /**
      * @brief List of field indices to extract as numeric values

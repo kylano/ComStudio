@@ -174,8 +174,9 @@ void RecordingWidget::recordPacket(const GenericDataPacket &packet)
     
     // Apply ID filter
     if (m_idFilterCheck->isChecked()) {
-        int filterId = m_idFilterSpin->value();
-        if (filterId >= 0 && packet.sensorId != filterId) {
+        QString filterId = QString::number(m_idFilterSpin->value());
+        // Compare as strings - handles alphanumeric IDs
+        if (!filterId.isEmpty() && filterId != "-1" && packet.sensorId != filterId) {
             return;
         }
     }
@@ -230,7 +231,7 @@ void RecordingWidget::writePacket(const GenericDataPacket &packet)
     }
     
     values.append(QString::number(packet.packetIndex));
-    values.append(QString::number(packet.sensorId));
+    values.append(packet.sensorId.isEmpty() ? "" : packet.sensorId);
     
     for (int i = 0; i < m_maxChannelsSeen; ++i) {
         if (i < packet.values.size()) {

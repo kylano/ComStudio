@@ -15,6 +15,15 @@ TerminalWidget::TerminalWidget(QWidget *parent)
     : QWidget(parent)
 {
     setupUi();
+    
+    // Setup batched update timer
+    m_flushTimer = new QTimer(this);
+    m_flushTimer->setInterval(FLUSH_INTERVAL_MS);
+    connect(m_flushTimer, &QTimer::timeout, this, &TerminalWidget::onFlushTimer);
+    
+    // Pre-allocate buffers
+    m_pendingRawText.reserve(MAX_PENDING_CHARS);
+    m_pendingPackets.reserve(MAX_PENDING_PACKETS);
 }
 
 void TerminalWidget::setupUi()
@@ -126,39 +135,131 @@ void TerminalWidget::appendRawData(const QByteArray &data)
         formatted = timestamp + formatted;
     }
     
-    m_terminal->appendPlainText(formatted);
+    // Batch the update
+    if (!m_pendingRawText.isEmpty()) {
+        m_pendingRawText.append('\n');
+    }
+    m_pendingRawText.append(formatted);
     
-    if (m_autoScroll) {
-        m_terminal->verticalScrollBar()->setValue(m_terminal->verticalScrollBar()->maximum());
+    // Start timer if not running
+    if (!m_flushTimer->isActive()) {
+        m_flushTimer->start();
+    }
+    
+    // Force flush if buffer is too large
+    if (m_pendingRawText.size() >= MAX_PENDING_CHARS) {
+        onFlushTimer();
+    }
+}
+
+void TerminalWidget::appendRawLine(const QString &line)
+{
+    if (m_displayMode == DisplayMode::Parsed) {
+        return;  // In parsed mode, only show parsed packets
+    }
+    
+    QString formatted;
+    if (m_displayMode == DisplayMode::Hex) {
+        formatted = line.toUtf8().toHex(' ').toUpper();
+    } else {
+        formatted = line;
+    }
+    
+    if (m_timestampCheck->isChecked()) {
+        QString timestamp = QDateTime::currentDateTime().toString("[hh:mm:ss.zzz] ");
+        formatted = timestamp + formatted;
+    }
+    
+    // Batch the update
+    if (!m_pendingRawText.isEmpty()) {
+        m_pendingRawText.append('\n');
+    }
+    m_pendingRawText.append(formatted);
+    
+    // Start timer if not running
+    if (!m_flushTimer->isActive()) {
+        m_flushTimer->start();
+    }
+    
+    // Force flush if buffer is too large
+    if (m_pendingRawText.size() >= MAX_PENDING_CHARS) {
+        onFlushTimer();
     }
 }
 
 void TerminalWidget::appendPacket(const GenericDataPacket &packet)
 {
-    QString formatted;
-    
-    if (m_displayMode == DisplayMode::Parsed) {
-        formatted = formatPacket(packet);
-    } else {
-        formatted = formatData(packet.rawData);
+    // Only process in Parsed mode
+    if (m_displayMode != DisplayMode::Parsed) {
+        return;
     }
     
-    if (m_timestampCheck->isChecked()) {
-        QString timestamp = QDateTime::fromMSecsSinceEpoch(packet.timestamp)
-            .toString("[hh:mm:ss.zzz] ");
-        formatted = timestamp + formatted;
+    // Batch the packet
+    m_pendingPackets.append(packet);
+    
+    // Start timer if not running
+    if (!m_flushTimer->isActive()) {
+        m_flushTimer->start();
     }
     
-    m_terminal->appendPlainText(formatted);
-    
-    if (m_autoScroll) {
-        m_terminal->verticalScrollBar()->setValue(m_terminal->verticalScrollBar()->maximum());
+    // Force flush if too many packets
+    if (m_pendingPackets.size() >= MAX_PENDING_PACKETS) {
+        onFlushTimer();
     }
 }
 
 void TerminalWidget::clear()
 {
+    m_pendingRawText.clear();
+    m_pendingPackets.clear();
     m_terminal->clear();
+}
+
+void TerminalWidget::flushPendingData()
+{
+    onFlushTimer();
+}
+
+void TerminalWidget::onFlushTimer()
+{
+    m_flushTimer->stop();
+    
+    // Flush raw text buffer
+    if (!m_pendingRawText.isEmpty()) {
+        m_terminal->appendPlainText(m_pendingRawText);
+        m_pendingRawText.clear();
+        // Keep the reserve capacity
+        m_pendingRawText.reserve(MAX_PENDING_CHARS);
+    }
+    
+    // Flush parsed packets buffer
+    if (!m_pendingPackets.isEmpty()) {
+        QString batch;
+        batch.reserve(m_pendingPackets.size() * 80);  // Estimate ~80 chars per packet
+        
+        for (const auto &packet : m_pendingPackets) {
+            QString formatted = formatPacket(packet);
+            if (m_timestampCheck->isChecked()) {
+                QString timestamp = QDateTime::fromMSecsSinceEpoch(packet.timestamp)
+                    .toString("[hh:mm:ss.zzz] ");
+                formatted = timestamp + formatted;
+            }
+            if (!batch.isEmpty()) {
+                batch.append('\n');
+            }
+            batch.append(formatted);
+        }
+        
+        m_terminal->appendPlainText(batch);
+        m_pendingPackets.clear();
+        // Keep the reserve capacity
+        m_pendingPackets.reserve(MAX_PENDING_PACKETS);
+    }
+    
+    // Auto-scroll if enabled
+    if (m_autoScroll) {
+        m_terminal->verticalScrollBar()->setValue(m_terminal->verticalScrollBar()->maximum());
+    }
 }
 
 void TerminalWidget::onDisplayModeChanged(int index)
@@ -233,7 +334,7 @@ QString TerminalWidget::formatPacket(const GenericDataPacket &packet) const
     QStringList parts;
     parts.append(QString("#%1").arg(packet.packetIndex));
     
-    if (packet.sensorId >= 0) {
+    if (!packet.sensorId.isEmpty()) {
         parts.append(QString("ID:%1").arg(packet.sensorId));
     }
     

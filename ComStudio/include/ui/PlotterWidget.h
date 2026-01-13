@@ -71,6 +71,19 @@ public:
      * @param enabled True for auto-scaling
      */
     void setAutoScale(bool enabled);
+    
+    /**
+     * @brief Enable/disable OpenGL GPU acceleration
+     * @param enabled True to use OpenGL
+     * @return True if OpenGL was successfully enabled/disabled
+     */
+    bool setOpenGlEnabled(bool enabled);
+    
+    /**
+     * @brief Check if OpenGL is currently enabled
+     * @return True if OpenGL is active
+     */
+    bool isOpenGlEnabled() const;
 
 public slots:
     /**
@@ -191,15 +204,37 @@ private:
     struct ChannelData {
         QVector<double> timestamps;
         QVector<double> values;
+        
+        ChannelData() {
+            // Pre-allocate for performance
+            timestamps.reserve(10000);
+            values.reserve(10000);
+        }
     };
     QMap<int, ChannelData> m_channelData;
     
+    // Batch data buffer (accumulate between replot cycles)
+    struct PendingData {
+        double timestamp;
+        QVector<double> values;
+    };
+    QVector<PendingData> m_pendingData;
+    static constexpr int PENDING_DATA_RESERVE = 500;
+    
     double m_timeWindow = 10.0;      ///< Display window in seconds
-    int m_maxDataPoints = 10000;     ///< Max points per channel
+    int m_maxDataPoints = 2000;      ///< Max points per channel (reduced for performance)
     bool m_autoScale = true;
     bool m_paused = false;
     qint64 m_startTime = 0;          ///< First data timestamp
     bool m_needsReplot = false;
+    
+    // Performance optimization settings
+    static constexpr int MAX_DISPLAY_POINTS = 1000;  ///< Max points to actually render
+    static constexpr int DOWNSAMPLE_THRESHOLD = 500; ///< Start downsampling above this
+    bool m_fastMode = true;          ///< Fast mode: disable anti-aliasing, reduce quality
+    int m_autoScaleCounter = 0;      ///< Counter for throttled auto-scale
+    double m_cachedYMin = 0;         ///< Cached Y min for throttled auto-scale
+    double m_cachedYMax = 0;         ///< Cached Y max for throttled auto-scale
     
     // Channel colors (Catppuccin Mocha palette)
     static const QVector<QColor> s_channelColors;

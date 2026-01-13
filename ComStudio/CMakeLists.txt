@@ -15,7 +15,11 @@ find_package(Qt6 REQUIRED COMPONENTS
     Gui
     SerialPort
     PrintSupport  # Required by QCustomPlot
+    OpenGLWidgets  # For GPU acceleration
 )
+
+# Find OpenGL for QCustomPlot GPU acceleration
+find_package(OpenGL)
 
 # Collect source files
 set(CORE_SOURCES
@@ -109,7 +113,22 @@ target_link_libraries(ComStudio PRIVATE
     Qt6::Gui
     Qt6::SerialPort
     Qt6::PrintSupport
+    Qt6::OpenGLWidgets
 )
+
+# Enable QCustomPlot OpenGL acceleration if OpenGL is available
+if(OpenGL_FOUND)
+    target_compile_definitions(ComStudio PRIVATE QCUSTOMPLOT_USE_OPENGL)
+    target_link_libraries(ComStudio PRIVATE OpenGL::GL)
+    message(STATUS "OpenGL GPU acceleration enabled for QCustomPlot")
+else()
+    message(STATUS "OpenGL not found - using software rendering")
+endif()
+
+# MinGW big object file fix (needed for QCustomPlot with OpenGL in debug mode)
+if(MINGW)
+    target_compile_options(ComStudio PRIVATE -Wa,-mbig-obj)
+endif()
 
 # Windows-specific settings
 set_target_properties(ComStudio PROPERTIES

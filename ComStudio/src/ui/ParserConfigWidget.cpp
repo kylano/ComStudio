@@ -185,7 +185,7 @@ QGroupBox* ParserConfigWidget::createIdFilterGroup()
     m_enableIdFilterCheck = new QCheckBox(tr("Enable ID filtering"));
     connect(m_enableIdFilterCheck, &QCheckBox::toggled, this, [this](bool checked) {
         m_idFieldSpin->setEnabled(checked);
-        m_acceptIdSpin->setEnabled(checked);
+        m_acceptIdEdit->setEnabled(checked);
         emit configChanged();
     });
     layout->addWidget(m_enableIdFilterCheck);
@@ -201,14 +201,14 @@ QGroupBox* ParserConfigWidget::createIdFilterGroup()
             this, &ParserConfigWidget::configChanged);
     filterLayout->addRow(tr("ID Field Index:"), m_idFieldSpin);
     
-    m_acceptIdSpin = new QSpinBox();
-    m_acceptIdSpin->setRange(-1, 255);
-    m_acceptIdSpin->setValue(-1);
-    m_acceptIdSpin->setSpecialValueText(tr("All"));
-    m_acceptIdSpin->setEnabled(false);
-    connect(m_acceptIdSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+    // Changed to QLineEdit for alphanumeric ID support (e.g., "d1", "#5", "sensor2")
+    m_acceptIdEdit = new QLineEdit();
+    m_acceptIdEdit->setPlaceholderText(tr("All (empty = no filter)"));
+    m_acceptIdEdit->setToolTip(tr("Enter sensor ID to filter (e.g., 'd1', '5', '#12820')\nLeave empty to accept all IDs"));
+    m_acceptIdEdit->setEnabled(false);
+    connect(m_acceptIdEdit, &QLineEdit::textChanged,
             this, &ParserConfigWidget::configChanged);
-    filterLayout->addRow(tr("Accept Sensor ID:"), m_acceptIdSpin);
+    filterLayout->addRow(tr("Accept Sensor ID:"), m_acceptIdEdit);
     
     layout->addLayout(filterLayout);
     
@@ -246,6 +246,39 @@ QGroupBox* ParserConfigWidget::createOptionsGroup()
     connect(m_trimWhitespaceCheck, &QCheckBox::toggled,
             this, &ParserConfigWidget::configChanged);
     layout->addWidget(m_trimWhitespaceCheck);
+    
+    // Performance section separator
+    auto *perfSeparator = new QFrame();
+    perfSeparator->setFrameShape(QFrame::HLine);
+    perfSeparator->setFrameShadow(QFrame::Sunken);
+    layout->addWidget(perfSeparator);
+    
+    auto *perfLabel = new QLabel(tr("<b>Performance</b>"));
+    layout->addWidget(perfLabel);
+    
+    // Rate limiting
+    auto *rateLayout = new QHBoxLayout();
+    m_rateLimitCheck = new QCheckBox(tr("Rate limit display"));
+    m_rateLimitCheck->setChecked(true);
+    m_rateLimitCheck->setToolTip(tr("Limit display updates for better performance at high data rates"));
+    connect(m_rateLimitCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        m_displayRateSpin->setEnabled(checked);
+        emit configChanged();
+    });
+    rateLayout->addWidget(m_rateLimitCheck);
+    
+    m_displayRateSpin = new QSpinBox();
+    m_displayRateSpin->setRange(1, 1000);
+    m_displayRateSpin->setValue(60);
+    m_displayRateSpin->setSuffix(tr(" Hz"));
+    m_displayRateSpin->setToolTip(tr("Maximum display update rate (data logging is not affected)"));
+    connect(m_displayRateSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            this, [this](int hz) {
+                emit displayRateChanged(hz);
+            });
+    rateLayout->addWidget(m_displayRateSpin);
+    rateLayout->addStretch();
+    layout->addLayout(rateLayout);
     
     return group;
 }
@@ -327,10 +360,10 @@ ParserConfig ParserConfigWidget::currentConfig() const
     // ID filter
     if (m_enableIdFilterCheck->isChecked()) {
         config.idFieldIndex = m_idFieldSpin->value();
-        config.acceptSensorId = m_acceptIdSpin->value();
+        config.acceptSensorId = m_acceptIdEdit->text().trimmed();
     } else {
         config.idFieldIndex = -1;
-        config.acceptSensorId = -1;
+        config.acceptSensorId.clear();
     }
     
     // Options
@@ -382,9 +415,9 @@ void ParserConfigWidget::setConfig(const ParserConfig &config)
     bool hasIdFilter = config.idFieldIndex >= 0;
     m_enableIdFilterCheck->setChecked(hasIdFilter);
     m_idFieldSpin->setValue(hasIdFilter ? config.idFieldIndex : 0);
-    m_acceptIdSpin->setValue(config.acceptSensorId);
+    m_acceptIdEdit->setText(config.acceptSensorId);
     m_idFieldSpin->setEnabled(hasIdFilter);
-    m_acceptIdSpin->setEnabled(hasIdFilter);
+    m_acceptIdEdit->setEnabled(hasIdFilter);
     
     // Options
     m_stripLabelsCheck->setChecked(config.stripLabels);
@@ -444,7 +477,7 @@ void ParserConfigWidget::applyPreset(const QString &presetName)
         // Hall sensor: d<id> X Y Z overflow
         config.delimiter = " ";
         config.idFieldIndex = 0;
-        config.acceptSensorId = -1;
+        config.acceptSensorId.clear();  // Empty = accept all
         config.dataFields = {1, 2, 3};
         config.channelNames = {"X", "Y", "Z"};
         config.stripLabels = false;

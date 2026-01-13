@@ -168,6 +168,27 @@ void MainWindow::setupMenus()
     autoSendAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_P));
     connect(autoSendAction, &QAction::triggered, this, &MainWindow::showAutoSendDialog);
     
+    toolsMenu->addSeparator();
+    
+    // OpenGL acceleration toggle
+    QAction *openGlAction = toolsMenu->addAction(tr("GPU Acceleration (OpenGL)"));
+    openGlAction->setCheckable(true);
+    openGlAction->setChecked(m_plotter->isOpenGlEnabled());
+    openGlAction->setToolTip(tr("Use GPU for plot rendering (faster for large datasets)"));
+    connect(openGlAction, &QAction::toggled, this, [this, openGlAction](bool checked) {
+        bool success = m_plotter->setOpenGlEnabled(checked);
+        if (success) {
+            statusBar()->showMessage(
+                checked ? tr("OpenGL GPU acceleration enabled") 
+                        : tr("OpenGL disabled - using software rendering"), 
+                3000);
+        } else {
+            openGlAction->setChecked(false);
+            openGlAction->setEnabled(false);
+            statusBar()->showMessage(tr("OpenGL not available"), 3000);
+        }
+    });
+    
     // Help menu
     QMenu *helpMenu = menuBar()->addMenu(tr("&Help"));
     
@@ -209,6 +230,16 @@ void MainWindow::initProtocolHandler()
     m_lineParser = lineParser.get();  // Keep raw pointer for config updates
     m_protocolHandler->registerProtocol("line", lineParser);
     
+    // Configure rate limiting for display performance (60 Hz default)
+    m_lineParser->setTargetDisplayRate(60);
+    m_lineParser->setRateLimitEnabled(true);
+    
+    // Connect LineParser-specific signals directly
+    connect(m_lineParser, &LineParser::rawLineReady,
+            this, &MainWindow::onRawLineReady);
+    connect(m_lineParser, &LineParser::dataForLogging,
+            this, &MainWindow::onDataForLogging);
+    
     // Initialize parser config widget with current config
     if (m_parserConfig && m_lineParser) {
         m_parserConfig->setConfig(m_lineParser->config());
@@ -240,7 +271,7 @@ void MainWindow::connectSignals()
     connect(&serial, &SerialManager::rawBytesReady,
             this, &MainWindow::onRawBytesReceived);
     
-    // Protocol handler connections
+    // Protocol handler connections (rate-limited for display)
     connect(m_protocolHandler.get(), &ProtocolHandler::dataParsed,
             this, &MainWindow::onDataParsed);
     
@@ -248,17 +279,25 @@ void MainWindow::connectSignals()
     connect(m_terminal, &TerminalWidget::sendData,
             this, &MainWindow::onSendData);
     
-    // Data buffer to UI connections
+    // Rate-limited data to plotter (through data buffer)
     connect(m_dataBuffer.get(), &DataBuffer::dataUpdated,
             m_plotter, &PlotterWidget::addData);
-    connect(m_dataBuffer.get(), &DataBuffer::dataUpdated,
-            m_recordingWidget, &RecordingWidget::recordPacket);
+    
+    // Note: Recording uses onDataForLogging (connected in initProtocolHandler)
+    // which is NOT rate-limited, ensuring all data is logged
     
     // Parser config connections
     connect(m_parserConfig, &ParserConfigWidget::configApplied,
             this, &MainWindow::onParserConfigApplied);
     connect(m_parserConfig, &ParserConfigWidget::testParseRequested,
             this, &MainWindow::onTestParseRequested);
+    connect(m_parserConfig, &ParserConfigWidget::displayRateChanged,
+            this, [this](int hz) {
+                if (m_lineParser) {
+                    m_lineParser->setTargetDisplayRate(hz);
+                    statusBar()->showMessage(tr("Display rate set to %1 Hz").arg(hz), 2000);
+                }
+            });
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -299,35 +338,48 @@ void MainWindow::onSerialError(const QString &error)
 void MainWindow::onRawBytesReceived(const QByteArray &data)
 {
     // Send to protocol handler for parsing
+    // The parser will emit rawLineReady, dataParsed (rate-limited), and dataForLogging
     m_protocolHandler->processRawData(data);
     
-    // Also send raw data to terminal in raw mode
-    m_terminal->appendRawData(data);
+    // Note: Raw terminal display is now handled by onRawLineReady
+    // to avoid double-processing and ensure proper line handling
+}
+
+void MainWindow::onRawLineReady(const QString &line)
+{
+    // Send raw line to terminal (for raw/hex mode display)
+    m_terminal->appendRawLine(line);
     
-    // Store last complete line for test parse
-    // Look for line ending in the data
-    QString dataStr = QString::fromUtf8(data);
-    if (dataStr.contains('\n')) {
-        // Get the last complete line
-        QStringList lines = dataStr.split('\n', Qt::SkipEmptyParts);
-        if (!lines.isEmpty()) {
-            m_lastRawLine = lines.last().trimmed();
-            m_parserConfig->setSampleLine(m_lastRawLine);
-        }
-    }
+    // Store for test parse feature
+    m_lastRawLine = line.trimmed();
+    m_parserConfig->setSampleLine(m_lastRawLine);
 }
 
 void MainWindow::onDataParsed(const GenericDataPacket &packet)
 {
+    // This is RATE-LIMITED data for display only
+    
     // Add to data buffer (will notify plotter)
     m_dataBuffer->addPacket(packet);
     
     // Update terminal in parsed mode
     m_terminal->appendPacket(packet);
     
-    // Update packet counter
+    // Update packet counter (rate-limited, so less overhead)
     m_packetCount++;
-    m_packetCountLabel->setText(tr("Packets: %1").arg(m_packetCount));
+    // Only update label periodically to reduce UI overhead
+    static int labelUpdateCounter = 0;
+    if (++labelUpdateCounter >= 5) {  // Update every 5 packets
+        labelUpdateCounter = 0;
+        m_packetCountLabel->setText(tr("Packets: %1").arg(m_packetCount));
+    }
+}
+
+void MainWindow::onDataForLogging(const GenericDataPacket &packet)
+{
+    // This is NOT rate-limited - receives ALL packets for data integrity
+    // Used exclusively for recording/logging
+    m_recordingWidget->recordPacket(packet);
 }
 
 void MainWindow::onSendData(const QByteArray &data)

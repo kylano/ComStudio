@@ -38,9 +38,11 @@ struct GenericDataPacket
     quint64 packetIndex = 0;
     
     /**
-     * @brief Sensor/device ID (if applicable, -1 if not used)
+     * @brief Sensor/device ID (if applicable, empty if not used)
+     * 
+     * Supports alphanumeric IDs like "d1", "sensor2", "#5", etc.
      */
-    int sensorId = -1;
+    QString sensorId;
     
     /**
      * @brief Channel name to value mapping

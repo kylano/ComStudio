@@ -99,6 +99,12 @@ signals:
      * @brief Emitted when any configuration value changes
      */
     void configChanged();
+    
+    /**
+     * @brief Emitted when display rate changes
+     * @param hz New display rate in Hz
+     */
+    void displayRateChanged(int hz);
 
 private slots:
     /**
@@ -189,13 +195,17 @@ private:
     
     // ID filter controls
     QSpinBox *m_idFieldSpin = nullptr;
-    QSpinBox *m_acceptIdSpin = nullptr;
+    QLineEdit *m_acceptIdEdit = nullptr;  // Changed to QLineEdit for alphanumeric IDs
     QCheckBox *m_enableIdFilterCheck = nullptr;
     
     // Options controls
     QCheckBox *m_stripLabelsCheck = nullptr;
     QLineEdit *m_labelSeparatorEdit = nullptr;
     QCheckBox *m_trimWhitespaceCheck = nullptr;
+    
+    // Performance controls
+    QSpinBox *m_displayRateSpin = nullptr;
+    QCheckBox *m_rateLimitCheck = nullptr;
     
     // Test parse controls
     QPlainTextEdit *m_sampleLineEdit = nullptr;

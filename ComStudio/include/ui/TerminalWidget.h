@@ -4,6 +4,7 @@
  *
  * Provides a scrollable text view for displaying incoming
  * serial data in various formats (raw, hex, parsed).
+ * Optimized with batched updates for high-throughput data.
  */
 
 #ifndef TERMINALWIDGET_H
@@ -15,6 +16,8 @@
 #include <QPushButton>
 #include <QCheckBox>
 #include <QLineEdit>
+#include <QTimer>
+#include <QElapsedTimer>
 
 #include "core/GenericDataPacket.h"
 
@@ -90,13 +93,19 @@ public:
 
 public slots:
     /**
-     * @brief Append raw bytes to terminal
+     * @brief Append raw bytes to terminal (optimized with batching)
      * @param data Raw bytes
      */
     void appendRawData(const QByteArray &data);
     
     /**
-     * @brief Append parsed data packet
+     * @brief Append raw line to terminal (for LineParser rawLineReady signal)
+     * @param line Raw line string
+     */
+    void appendRawLine(const QString &line);
+    
+    /**
+     * @brief Append parsed data packet (batched for performance)
      * @param packet Parsed packet
      */
     void appendPacket(const GenericDataPacket &packet);
@@ -105,6 +114,11 @@ public slots:
      * @brief Clear terminal content
      */
     void clear();
+    
+    /**
+     * @brief Flush any pending batched data immediately
+     */
+    void flushPendingData();
 
 signals:
     /**
@@ -130,6 +144,11 @@ private slots:
      * @param enabled Auto-scroll state
      */
     void onAutoScrollToggled(bool enabled);
+    
+    /**
+     * @brief Flush batched updates to terminal (called by timer)
+     */
+    void onFlushTimer();
 
 private:
     /**
@@ -173,6 +192,14 @@ private:
     SendMode m_sendMode = SendMode::ASCII;
     int m_maxLines = 10000;
     bool m_autoScroll = true;
+    
+    // Batched update optimization
+    QTimer *m_flushTimer = nullptr;
+    QString m_pendingRawText;          ///< Buffered raw text
+    QVector<GenericDataPacket> m_pendingPackets;  ///< Buffered packets for parsed mode
+    static constexpr int FLUSH_INTERVAL_MS = 50;  ///< Batch flush interval (~20 FPS)
+    static constexpr int MAX_PENDING_CHARS = 8192; ///< Max chars before forced flush
+    static constexpr int MAX_PENDING_PACKETS = 100; ///< Max packets before forced flush
 };
 
 #endif // TERMINALWIDGET_H

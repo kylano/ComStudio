@@ -96,10 +96,22 @@ private slots:
     void onRawBytesReceived(const QByteArray &data);
     
     /**
-     * @brief Handle parsed data packet
+     * @brief Handle parsed data packet (rate-limited for display)
      * @param packet Parsed packet
      */
     void onDataParsed(const GenericDataPacket &packet);
+    
+    /**
+     * @brief Handle raw line from parser (for terminal raw mode)
+     * @param line Raw line
+     */
+    void onRawLineReady(const QString &line);
+    
+    /**
+     * @brief Handle all parsed data for logging (not rate-limited)
+     * @param packet Parsed packet
+     */
+    void onDataForLogging(const GenericDataPacket &packet);
     
     /**
      * @brief Handle send data from terminal

@@ -31,6 +31,15 @@ class QComboBox;
 class QLabel;
 
 /**
+ * @enum DownsampleMode
+ * @brief Downsampling algorithm selection
+ */
+enum class DownsampleMode {
+    LTTB,       ///< Largest Triangle Three Buckets - best for smooth trends
+    MinMax      ///< Min-Max bucketing - best for catching spikes/glitches
+};
+
+/**
  * @class PlotterWidget
  * @brief Real-time data plotter widget
  *
@@ -146,6 +155,12 @@ private slots:
     void onBufferLimitChanged(int value);
     
     /**
+     * @brief Handle downsample mode change
+     * @param index Combo box index
+     */
+    void onDownsampleModeChanged(int index);
+    
+    /**
      * @brief Handle legend item click for pop-out
      * @param legend Legend clicked
      * @param item Item clicked
@@ -192,6 +207,7 @@ private:
     QSpinBox *m_timeWindowSpin = nullptr;
     QSpinBox *m_bufferLimitSpin = nullptr;
     QCheckBox *m_autoScaleCheck = nullptr;
+    QComboBox *m_downsampleModeCombo = nullptr;
     QPushButton *m_pauseButton = nullptr;
     QPushButton *m_clearButton = nullptr;
     QLabel *m_bufferStatusLabel = nullptr;
@@ -225,12 +241,13 @@ private:
     int m_maxDataPoints = 2000;      ///< Max points per channel (reduced for performance)
     bool m_autoScale = true;
     bool m_paused = false;
+    DownsampleMode m_downsampleMode = DownsampleMode::LTTB;  ///< Current downsampling algorithm
     qint64 m_startTime = 0;          ///< First data timestamp
     bool m_needsReplot = false;
     
     // Performance optimization settings
-    static constexpr int MAX_DISPLAY_POINTS = 1000;  ///< Max points to actually render
-    static constexpr int DOWNSAMPLE_THRESHOLD = 500; ///< Start downsampling above this
+    static constexpr int MAX_DISPLAY_POINTS = 2000;  ///< Max points to actually render (with min-max = 4000 vertices)
+    static constexpr int DOWNSAMPLE_THRESHOLD = 1000; ///< Start downsampling above this
     bool m_fastMode = true;          ///< Fast mode: disable anti-aliasing, reduce quality
     int m_autoScaleCounter = 0;      ///< Counter for throttled auto-scale
     double m_cachedYMin = 0;         ///< Cached Y min for throttled auto-scale

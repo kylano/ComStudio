@@ -13,6 +13,7 @@
 #include <QSpinBox>
 #include <QCheckBox>
 #include <QPushButton>
+#include <QComboBox>
 #include <QDateTime>
 #include <QDebug>
 
@@ -88,6 +89,17 @@ void PlotterWidget::setupUi()
     m_bufferStatusLabel = new QLabel();
     m_bufferStatusLabel->setToolTip(tr("Current buffer usage"));
     toolbarLayout->addWidget(m_bufferStatusLabel);
+    
+    // Downsample mode selector
+    toolbarLayout->addWidget(new QLabel(tr("Sample:")));
+    m_downsampleModeCombo = new QComboBox();
+    m_downsampleModeCombo->addItem(tr("LTTB"), static_cast<int>(DownsampleMode::LTTB));
+    m_downsampleModeCombo->addItem(tr("Min-Max"), static_cast<int>(DownsampleMode::MinMax));
+    m_downsampleModeCombo->setToolTip(tr("LTTB: smooth trends\nMin-Max: catches all spikes"));
+    m_downsampleModeCombo->setCurrentIndex(0);
+    connect(m_downsampleModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &PlotterWidget::onDownsampleModeChanged);
+    toolbarLayout->addWidget(m_downsampleModeCombo);
     
     toolbarLayout->addStretch();
     
@@ -316,7 +328,7 @@ void PlotterWidget::onUpdateTimer()
         return;
     }
     
-    // Update graph data with downsampling for performance
+    // Update graph data with selected downsampling algorithm
     for (auto it = m_channelData.begin(); it != m_channelData.end(); ++it) {
         int channelIndex = it.key();
         const auto &data = it.value();
@@ -326,20 +338,135 @@ void PlotterWidget::onUpdateTimer()
             
             // PERFORMANCE: Downsample if too many points
             if (dataSize > MAX_DISPLAY_POINTS) {
-                // Use LTTB-style downsampling: keep first, last, and sample in between
                 QVector<double> dsTime, dsValue;
-                dsTime.reserve(MAX_DISPLAY_POINTS);
-                dsValue.reserve(MAX_DISPLAY_POINTS);
                 
-                int step = dataSize / MAX_DISPLAY_POINTS;
-                if (step < 1) step = 1;
-                
-                for (int i = 0; i < dataSize; i += step) {
-                    dsTime.append(data.timestamps[i]);
-                    dsValue.append(data.values[i]);
-                }
-                // Always include the last point
-                if (dsTime.isEmpty() || dsTime.last() != data.timestamps.last()) {
+                if (m_downsampleMode == DownsampleMode::MinMax) {
+                    // ============================================================
+                    // MIN-MAX DOWNSAMPLING
+                    // Best for catching spikes/glitches - preserves signal envelope
+                    // ============================================================
+                    int numBuckets = MAX_DISPLAY_POINTS / 2;
+                    dsTime.reserve(numBuckets * 2 + 2);
+                    dsValue.reserve(numBuckets * 2 + 2);
+                    
+                    // Always include first point
+                    dsTime.append(data.timestamps.first());
+                    dsValue.append(data.values.first());
+                    
+                    double bucketSize = static_cast<double>(dataSize - 2) / numBuckets;
+                    
+                    for (int bucket = 0; bucket < numBuckets; ++bucket) {
+                        int startIdx = 1 + static_cast<int>(bucket * bucketSize);
+                        int endIdx = 1 + static_cast<int>((bucket + 1) * bucketSize);
+                        endIdx = qMin(endIdx, dataSize - 1);
+                        
+                        if (startIdx >= endIdx) continue;
+                        
+                        // Find min and max in this bucket
+                        int minIdx = startIdx, maxIdx = startIdx;
+                        double minVal = data.values[startIdx];
+                        double maxVal = data.values[startIdx];
+                        
+                        for (int i = startIdx + 1; i < endIdx; ++i) {
+                            if (data.values[i] < minVal) {
+                                minVal = data.values[i];
+                                minIdx = i;
+                            }
+                            if (data.values[i] > maxVal) {
+                                maxVal = data.values[i];
+                                maxIdx = i;
+                            }
+                        }
+                        
+                        // Add min and max in time order to preserve signal shape
+                        if (minIdx <= maxIdx) {
+                            dsTime.append(data.timestamps[minIdx]);
+                            dsValue.append(minVal);
+                            if (minIdx != maxIdx) {
+                                dsTime.append(data.timestamps[maxIdx]);
+                                dsValue.append(maxVal);
+                            }
+                        } else {
+                            dsTime.append(data.timestamps[maxIdx]);
+                            dsValue.append(maxVal);
+                            dsTime.append(data.timestamps[minIdx]);
+                            dsValue.append(minVal);
+                        }
+                    }
+                    
+                    // Always include last point
+                    dsTime.append(data.timestamps.last());
+                    dsValue.append(data.values.last());
+                    
+                } else {
+                    // ============================================================
+                    // LTTB DOWNSAMPLING (default)
+                    // Best for smooth trend visualization - preserves visual shape
+                    // ============================================================
+                    dsTime.reserve(MAX_DISPLAY_POINTS);
+                    dsValue.reserve(MAX_DISPLAY_POINTS);
+                    
+                    // Always include first point
+                    dsTime.append(data.timestamps.first());
+                    dsValue.append(data.values.first());
+                    
+                    // Bucket size (first and last points are fixed)
+                    double bucketSize = static_cast<double>(dataSize - 2) / (MAX_DISPLAY_POINTS - 2);
+                    
+                    int prevSelectedIdx = 0;  // Index of last selected point
+                    
+                    for (int bucket = 0; bucket < MAX_DISPLAY_POINTS - 2; ++bucket) {
+                        // Current bucket range
+                        int bucketStart = static_cast<int>(bucket * bucketSize) + 1;
+                        int bucketEnd = static_cast<int>((bucket + 1) * bucketSize) + 1;
+                        bucketEnd = qMin(bucketEnd, dataSize - 1);
+                        
+                        // Next bucket range (for averaging)
+                        int nextBucketStart = bucketEnd;
+                        int nextBucketEnd = static_cast<int>((bucket + 2) * bucketSize) + 1;
+                        nextBucketEnd = qMin(nextBucketEnd, dataSize);
+                        
+                        // Calculate average point of next bucket (point C in triangle)
+                        double avgX = 0, avgY = 0;
+                        int nextCount = nextBucketEnd - nextBucketStart;
+                        if (nextCount > 0) {
+                            for (int i = nextBucketStart; i < nextBucketEnd; ++i) {
+                                avgX += data.timestamps[i];
+                                avgY += data.values[i];
+                            }
+                            avgX /= nextCount;
+                            avgY /= nextCount;
+                        } else {
+                            // Last bucket - use last point
+                            avgX = data.timestamps.last();
+                            avgY = data.values.last();
+                        }
+                        
+                        // Point A (previously selected point)
+                        double ax = data.timestamps[prevSelectedIdx];
+                        double ay = data.values[prevSelectedIdx];
+                        
+                        // Find point in current bucket that maximizes triangle area
+                        double maxArea = -1;
+                        int maxAreaIdx = bucketStart;
+                        
+                        for (int i = bucketStart; i < bucketEnd; ++i) {
+                            double bx = data.timestamps[i];
+                            double by = data.values[i];
+                            double area = qAbs((ax - avgX) * (by - ay) - (ax - bx) * (avgY - ay));
+                            
+                            if (area > maxArea) {
+                                maxArea = area;
+                                maxAreaIdx = i;
+                            }
+                        }
+                        
+                        dsTime.append(data.timestamps[maxAreaIdx]);
+                        dsValue.append(data.values[maxAreaIdx]);
+                        prevSelectedIdx = maxAreaIdx;
+                    }
+                    
+                    // Always include last point
                     dsTime.append(data.timestamps.last());
                     dsValue.append(data.values.last());
                 }
@@ -406,6 +533,12 @@ void PlotterWidget::onBufferLimitChanged(int value)
         }
     }
     
+    m_needsReplot = true;
+}
+
+void PlotterWidget::onDownsampleModeChanged(int index)
+{
+    m_downsampleMode = static_cast<DownsampleMode>(m_downsampleModeCombo->itemData(index).toInt());
     m_needsReplot = true;
 }
 
